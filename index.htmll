@@ -1,0 +1,2136 @@
+<?php
+// Maintenance mode redirect
+$__maintFlag = __DIR__ . '/data/maintenance.flag';
+if (file_exists($__maintFlag)) {
+    header('Location: maintenance.php');
+    exit;
+}
+
+// Record visitor statistics
+require_once __DIR__ . '/includes/StatisticsManager.php';
+$statsManager = new StatisticsManager();
+$statsManager->recordVisitor();
+
+// New: load categories config helper
+function loadCategoriesConfig(): array
+{
+    $path = __DIR__ . '/config/categories.json';
+    if (!file_exists($path))
+        return [];
+    $cfg = json_decode(file_get_contents($path), true);
+    return is_array($cfg) ? $cfg : [];
+}
+
+// Replace hardcoded $kategori_list with dynamic from config (fallback to existing)
+$cfg = loadCategoriesConfig();
+$kategori_list = [];
+if (!empty($cfg['categories']) && is_array($cfg['categories'])) {
+    foreach ($cfg['categories'] as $key => $meta) {
+        $kategori_list[$key] = $meta['label'] ?? strtoupper(str_replace('_', ' ', $key));
+    }
+} else {
+    $kategori_list = [
+        'jumlah_penduduk' => 'Jumlah Penduduk',
+        'umur_tunggal' => 'Umur Tunggal',
+        'pendidikan' => 'Pendidikan',
+        'kepala_keluarga' => 'Kepala Keluarga',
+        'status_kawin' => 'Status Kawin',
+        'agama' => 'Agama',
+        'akta_kawin_cerai' => 'Akta Kawin Cerai',
+        'disabilitas' => 'Disabilitas',
+        'laju_pertumbuhan_penduduk' => 'Laju Pertumbuhan Penduduk',
+        'persentase_angkatan_kerja' => 'Persentase Angkatan Kerja',
+        'rasio_ketergantungan' => 'Rasio Ketergantungan',
+        'kelompok_umur' => 'Kelompok Umur',
+    ];
+}
+
+$tahun_list = range(2024, 2026);
+$semester_list = !empty($cfg['semester_labels']) && is_array($cfg['semester_labels'])
+    ? $cfg['semester_labels']
+    : [1 => 'Semester 1 (Jan-Juni)', 2 => 'Semester 2 (Juli-Des)'];
+$data = [];
+$kategori = $_GET['kategori'] ?? '';
+$tahun = $_GET['tahun'] ?? '';
+$semester = $_GET['semester'] ?? '';
+$kecamatan = $_GET['kecamatan'] ?? '';
+$desa = $_GET['desa'] ?? '';
+$rentang_umur = $_GET['rentang_umur'] ?? '';
+$umur_dari = $_GET['umur_dari'] ?? '';
+$umur_sampai = $_GET['umur_sampai'] ?? '';
+$per_page_options = [10, 25, 50, 100];
+$default_per_page = 10;
+$per_page = isset($_GET['per_page']) ? (int) $_GET['per_page'] : $default_per_page;
+if (!in_array($per_page, $per_page_options, true)) {
+    $per_page = $default_per_page;
+}
+$page = isset($_GET['page']) ? max(1, (int) $_GET['page']) : 1;
+
+// Define kecamatan and desa lists based on instruksi5.txt
+$kecamatan_list = [
+    '621001' => 'SEPANG',
+    '621002' => 'KURUN',
+    '621003' => 'TEWAH',
+    '621004' => 'KAHAYAN HULU UTARA',
+    '621005' => 'RUNGAN',
+    '621006' => 'MANUHING',
+    '621007' => 'MIHING RAYA',
+    '621008' => 'DAMANG BATU',
+    '621009' => 'MIRI MANASA',
+    '621010' => 'RUNGAN HULU',
+    '621011' => 'MANUHING RAYA',
+    '621012' => 'RUNGAN BARAT'
+];
+
+$desa_list = [
+    '621001' => [
+        '6210011001' => 'SEPANG SIMIN',
+        '6210012002' => 'SEPANG KOTA',
+        '6210012003' => 'TEWAI BARU',
+        '6210012004' => 'TANJUNG KARITAK',
+        '6210012011' => 'PAMATANG LIMAU',
+        '6210012012' => 'TAMPELAS',
+        '6210012014' => 'RABAUH'
+    ],
+    '621002' => [
+        '6210021001' => 'TAMPANG TUMBANG ANJIR',
+        '6210021012' => 'KUALA KURUN',
+        '6210022002' => 'PETAK BAHANDANG',
+        '6210022003' => 'TANJUNG RIU',
+        '6210022004' => 'TELUK NYATU',
+        '6210022005' => 'TUMBANG LAMPAHUNG',
+        '6210022006' => 'TEWANG PAJANGAN',
+        '6210022007' => 'TUMBANG TARIAK',
+        '6210022008' => 'TUMBANG MIWAN',
+        '6210022009' => 'HURUNG BUNUT',
+        '6210022010' => 'TUMBANG HAKAU',
+        '6210022011' => 'PILANG MUNDUK',
+        '6210022013' => 'TUMBANG MANYANGAN',
+        '6210022014' => 'PENDA PILANG',
+        '6210022015' => 'TUMBANG TAMBIRAH'
+    ],
+    '621003' => [
+        '6210031005' => 'TEWAH',
+        '6210032001' => 'SARE RANGAN',
+        '6210032002' => 'TUMBANG PAJANGEI',
+        '6210032003' => 'KASINTU',
+        '6210032004' => 'BATU NYIWUH',
+        '6210032006' => 'TUMBANG HABAON',
+        '6210032007' => 'SEI RIANG',
+        '6210032008' => 'SANDUNG TAMBUN',
+        '6210032009' => 'TANJUNG UNTUNG',
+        '6210032010' => 'UPON BATU',
+        '6210032011' => 'SUMUR MAS',
+        '6210032012' => 'BATU NYAPAU',
+        '6210032013' => 'TAJA URAP',
+        '6210032014' => 'TELUK LAWAH',
+        '6210032015' => 'KARASON RAYA',
+        '6210032016' => 'RANGAN MIHING'
+    ],
+    '621004' => [
+        '6210041001' => 'TUMBANG MIRI',
+        '6210042002' => 'BATU TANGKOI',
+        '6210042005' => 'PENDA RANGAS',
+        '6210042006' => 'TUMBANG SIAN',
+        '6210042008' => 'TUMBANG PASANGON',
+        '6210042012' => 'TUMBANG KORIK',
+        '6210042014' => 'TUMBANG PONYOI',
+        '6210042019' => 'DANDANG',
+        '6210042020' => 'TUMBANG HAMPUTUNG',
+        '6210042021' => 'TUMBANG TAJUNGAN',
+        '6210042028' => 'TUMBANG TAKAOI',
+        '6210042029' => 'TELUK KANDURI'
+    ],
+    '621005' => [
+        '6210051021' => 'JAKATAN RAYA',
+        '6210052001' => 'TUMBANG JUTUH',
+        '6210052002' => 'TUMBANG BARINGEI',
+        '6210052009' => 'TUMBANG MALAHOI',
+        '6210052014' => 'TUMBANG BUNUT',
+        '6210052015' => 'TUMBANG KAJUEI',
+        '6210052016' => 'LUWUK KANTOR',
+        '6210052017' => 'LUWUK LANGKUAS',
+        '6210052018' => 'TALANGKAH',
+        '6210052019' => 'PAREMPEI',
+        '6210052020' => 'LINAU',
+        '6210052022' => 'BERENG BARU',
+        '6210052023' => 'BERENG MALAKA',
+        '6210052027' => 'KARYA BHAKTI'
+    ],
+    '621006' => [
+        '6210061001' => 'TUMBANG TALAKEN',
+        '6210062002' => 'TUMBANG SEPAN',
+        '6210062003' => 'TANGKI DAHUYAN',
+        '6210062004' => 'BERENG BALAWAN',
+        '6210062005' => 'BERENG JUN',
+        '6210062006' => 'TAKARAS',
+        '6210062012' => 'BELAWAN MULIA',
+        '6210062013' => 'TARINGEN',
+        '6210062014' => 'BANGUN SARI',
+        '6210062015' => 'FAJAR HARAPAN',
+        '6210062017' => 'GOHONG',
+        '6210062018' => 'TUMBANG JALEMU'
+    ],
+    '621007' => [
+        '6210071005' => 'KAMPURI',
+        '6210072001' => 'TUYUN',
+        '6210072002' => 'TUMBANG EMPAS',
+        '6210072003' => 'RANGAN TATE',
+        '6210072004' => 'DAHIAN TAMBUK',
+        '6210072006' => 'TUMBANG DANAU'
+    ],
+    '621008' => [
+        '6210081008' => 'TUMBANG MARIKOI',
+        '6210082001' => 'LAWANG KANJI',
+        '6210082002' => 'TUMBANG MAHUROI',
+        '6210082003' => 'KARETAU RAMBANGUN',
+        '6210082004' => 'KARETAU SARIAN',
+        '6210082005' => 'TUMBANG POSU',
+        '6210082006' => 'TUMBANG MARAYA',
+        '6210082007' => 'TUMBANG ANOI'
+    ],
+    '621009' => [
+        '6210091003' => 'TUMBANG NAPOI',
+        '6210092001' => 'TUMBANG SIRUK',
+        '6210092002' => 'MANGKUHUNG',
+        '6210092004' => 'TUMBANG MASUKIH',
+        '6210092005' => 'RANGAN HIRAN',
+        '6210092006' => 'HAROWU',
+        '6210092007' => 'TUMBANG MANYOI',
+        '6210092008' => 'TUMBANG LAPAN',
+        '6210092009' => 'BUNTOI',
+        '6210092010' => 'TUMBANG KOROI',
+        '6210092011' => 'TUMBANG HATUNG'
+    ],
+    '621010' => [
+        '6210101004' => 'TUMBANG RAHUYAN',
+        '6210102001' => 'JANGKIT',
+        '6210102002' => 'TUMBANG LAPAN',
+        '6210102003' => 'BATU PUTER',
+        '6210102005' => 'SEI ANTAI',
+        '6210102006' => 'HANTAPANG',
+        '6210102007' => 'SANGAL',
+        '6210102008' => 'TUMBANG TUWE',
+        '6210102012' => 'TUMBANG MUJAI'
+    ],
+    '621011' => [
+        '6210111005' => 'TEHANG',
+        '6210112002' => 'TUMBANG SAMUI',
+        '6210112003' => 'TUMBANG OROI',
+        '6210112004' => 'LUWUK TUKAU',
+        '6210112006' => 'PUTAT DUREI',
+        '6210112007' => 'TUMBANG MANTUHE'
+    ],
+    '621012' => [
+        '6210121006' => 'RABAMBANG',
+        '6210122001' => 'HUJUNG PATA',
+        '6210122002' => 'TUMBANG JALEMU KAJUEI',
+        '6210122003' => 'JALEMU RAYA',
+        '6210122004' => 'JALEMU MASULAN',
+        '6210122005' => 'MANGKAWUK',
+        '6210122007' => 'TAJAH ANTANG RAYA',
+        '6210122008' => 'TUMBANG KUAYAN',
+        '6210122009' => 'TUMBANG LANGGAH',
+        '6210122010' => 'TUSANG RAYA',
+        '6210122011' => 'TUMBANG BAHANEI'
+    ]
+];
+
+// Add: helper to build multi-row table headers from arrays (config)
+function buildHeaderRows(array $h1, array $h2 = []): array
+{
+    // Build groups from header1
+    $groups = [];
+    $count = count($h1);
+
+    for ($i = 0; $i < $count; $i++) {
+        $label = trim((string) ($h1[$i] ?? ''));
+        if ($label === '')
+            continue;
+
+        // Count colspan (consecutive empty cells after this label)
+        $colspan = 1;
+        $j = $i + 1;
+        while ($j < $count && trim((string) ($h1[$j] ?? '')) === '') {
+            $colspan++;
+            $j++;
+        }
+
+        $groups[] = [
+            'label' => $label,
+            'colspan' => $colspan,
+            'start_index' => $i
+        ];
+
+        $i = $j - 1; // Skip the empty cells we just counted
+    }
+
+    // Check if we have a second row
+    $hasSecond = !empty($h2) && count(array_filter($h2, function ($v) {
+        return trim((string) $v) !== ''; })) > 0;
+
+    // Build header row 1
+    $row1 = '<tr>';
+    foreach ($groups as $group) {
+        $attrs = '';
+        if ($group['colspan'] > 1) {
+            $attrs .= ' colspan="' . $group['colspan'] . '"';
+        }
+        if ($hasSecond && $group['colspan'] === 1) {
+            $attrs .= ' rowspan="2"';
+        }
+        $row1 .= '<td' . $attrs . '>' . htmlspecialchars($group['label']) . '</td>';
+    }
+    $row1 .= '</tr>';
+
+    // Build header row 2
+    $row2 = '';
+    if ($hasSecond) {
+        $row2 = '<tr>';
+
+        // Process header2 based on groups
+        $h2Index = 0;
+
+        foreach ($groups as $group) {
+            if ($group['colspan'] === 1) {
+                // Skip cells with rowspan=2 (they already span both rows)
+                // Check if this position in h2 should be skipped
+                if (isset($h2[$h2Index]) && trim((string) $h2[$h2Index]) === '') {
+                    $h2Index++; // Skip empty placeholder
+                }
+                continue;
+            } else {
+                // Output cells for this colspan group
+                for ($k = 0; $k < $group['colspan']; $k++) {
+                    $value = '';
+
+                    // Find next non-empty value in h2
+                    while ($h2Index < count($h2) && trim((string) ($h2[$h2Index] ?? '')) === '') {
+                        $h2Index++;
+                    }
+
+                    if ($h2Index < count($h2)) {
+                        $value = trim((string) $h2[$h2Index]);
+                        $h2Index++;
+                    }
+
+                    $row2 .= '<td>' . htmlspecialchars($value) . '</td>';
+                }
+            }
+        }
+
+        $row2 .= '</tr>';
+    }
+
+    return ['header1' => $row1, 'header2' => $row2];
+}
+
+function buildQueryString(array $overrides = []): string
+{
+    $params = $_GET;
+    foreach ($overrides as $key => $value) {
+        if ($value === null) {
+            unset($params[$key]);
+        } else {
+            $params[$key] = $value;
+        }
+    }
+    return '?' . http_build_query($params);
+}
+
+function generateCategoryHeader($kategori, $rentang_umur = '', $umur_dari = '', $umur_sampai = '')
+{
+    global $cfg;
+
+    // Special handling for umur_tunggal with custom range
+    if ($kategori === 'umur_tunggal' && $rentang_umur === 'custom' && $umur_dari !== '' && $umur_sampai !== '') {
+        $header1_parts = ['KODE', 'WILAYAH'];
+        $header2_parts = ['', ''];
+
+        for ($age = intval($umur_dari); $age <= intval($umur_sampai); $age++) {
+            $header1_parts[] = "Umur $age Tahun";
+            $header1_parts[] = '';
+            $header1_parts[] = '';
+
+            $header2_parts[] = 'L';
+            $header2_parts[] = 'P';
+            $header2_parts[] = 'JML';
+        }
+
+        return buildHeaderRows($header1_parts, $header2_parts);
+    }
+
+    if (!empty($cfg['categories'][$kategori]['header1'])) {
+        $h1 = $cfg['categories'][$kategori]['header1'];
+        $h2 = $cfg['categories'][$kategori]['header2'] ?? [];
+        return buildHeaderRows($h1, $h2);
+    }
+    switch ($kategori) {
+        case 'status_kawin':
+            return [
+                'header1' => '<tr class="status-kawin-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="2">BELUM KAWIN</td>
+                    <td colspan="2">KAWIN</td>
+                    <td colspan="2">CERAI HIDUP</td>
+                    <td colspan="2">CERAI MATI</td>
+                </tr>',
+                'header2' => '<tr class="status-kawin-header">
+                    <td>L</td><td>P</td>
+                    <td>L</td><td>P</td>
+                    <td>L</td><td>P</td>
+                    <td>L</td><td>P</td>
+                </tr>'
+            ];
+
+        case 'agama':
+            return [
+                'header1' => '<tr class="agama-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">ISLAM</td>
+                    <td colspan="3">KRISTEN</td>
+                    <td colspan="3">KATHOLIK</td>
+                    <td colspan="3">HINDU</td>
+                    <td colspan="3">BUDHA</td>
+                    <td colspan="3">KHONGHUCU</td>
+                    <td colspan="3">KEPERCAYAAN LAINNYA</td>
+                </tr>',
+                'header2' => '<tr class="agama-header">
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                </tr>'
+            ];
+
+        case 'jumlah_penduduk':
+            return [
+                'header1' => '<tr class="jumlah-penduduk-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">JUMLAH PENDUDUK</td>
+                </tr>',
+                'header2' => '<tr class="jumlah-penduduk-header">
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                </tr>'
+            ];
+
+        case 'akta_kawin_cerai':
+            return [
+                'header1' => '<tr class="akta-kawin-cerai-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">KAWIN</td>
+                    <td colspan="3">MEMILIKI AKTA KAWIN</td>
+                    <td colspan="3">BELUM MEMILIKI AKTA KAWIN</td>
+                    <td rowspan="2">% KAWIN</td>
+                    <td rowspan="2">BATAS</td>
+                    <td colspan="3">CERAI</td>
+                    <td colspan="3">MEMILIKI AKTA CERAI</td>
+                    <td colspan="3">BELUM MEMILIKI AKTA CERAI</td>
+                    <td rowspan="2">% CERAI</td>
+                </tr>',
+                'header2' => '<tr class="akta-kawin-cerai-header">
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                </tr>'
+            ];
+
+        case 'disabilitas':
+            return [
+                'header1' => '<tr class="disabilitas-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">FISIK</td>
+                    <td colspan="3">NETRA/BUTA</td>
+                    <td colspan="3">RUNGU/WICARA</td>
+                    <td colspan="3">MENTAL/JIWA</td>
+                    <td colspan="3">FISIK dan MENTAL</td>
+                    <td colspan="3">LAINNYA</td>
+                </tr>',
+                'header2' => '<tr class="disabilitas-header">
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                </tr>'
+            ];
+
+        case 'kepala_keluarga':
+            return [
+                'header1' => '<tr class="kepala-keluarga-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">KEPALA KELUARGA</td>
+                </tr>',
+                'header2' => '<tr class="kepala-keluarga-header">
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                </tr>'
+            ];
+
+        case 'laju_pertumbuhan_penduduk':
+            return [
+                'header1' => '<tr class="laju-pertumbuhan-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">2024 Semester 2</td>
+                    <td colspan="3">2025 Semester 1</td>
+                    <td colspan="3">LAJU PERTUMBUHAN PENDUDUK</td>
+                </tr>',
+                'header2' => '<tr class="laju-pertumbuhan-header">
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                    <td>L</td><td>P</td><td>JUMLAH</td>
+                </tr>'
+            ];
+
+        case 'pendidikan':
+            return [
+                'header1' => '<tr class="pendidikan-header">
+                    <td rowspan="2">KODE</td>
+                    <td rowspan="2">WILAYAH</td>
+                    <td colspan="3">TIDAK/BLM SEKOLAH</td>
+                    <td colspan="3">BELUM TAMAT SD/SEDERAJAT</td>
+                    <td colspan="3">TAMAT SD/SEDERAJAT</td>
+                    <td colspan="3">SLTP/SEDERAJAT</td>
+                    <td colspan="3">SLTA/SEDERAJAT</td>
+                    <td colspan="3">DIPLOMA I/II</td>
+                    <td colspan="3">AKADEMI/DIPL.III/S. MUDA</td>
+                    <td colspan="3">DIPLOMA IV/STRATA I</td>
+                    <td colspan="3">STRATA-II</td>
+                    <td colspan="3">STRATA-III</td>
+                </tr>',
+                'header2' => '<tr class="pendidikan-header">
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                    <td>L</td><td>P</td><td>JML</td>
+                </tr>'
+            ];
+
+        case 'persentase_angkatan_kerja':
+            return [
+                'header1' => '<tr class="angkatan-kerja-header">
+                    <td>KODE</td>
+                    <td>WILAYAH</td>
+                    <td>USIA KERJA</td>
+                    <td>JUMLAH PENDUDUK</td>
+                    <td>PERSEN TENAGA KERJA</td>
+                </tr>',
+                'header2' => ''
+            ];
+
+        case 'rasio_ketergantungan':
+            return [
+                'header1' => '<tr class="rasio-ketergantungan-header">
+                    <td>KODE</td>
+                    <td>WILAYAH</td>
+                    <td>USIA MUDA</td>
+                    <td>USIA PRODUKTIF</td>
+                    <td>USIA TUA</td>
+                    <td>RASIO KETERGANTUNGAN MUDA</td>
+                    <td>RASIO KETERGANTUNGAN TUA</td>
+                    <td>RASIO KETERGANTUNGAN TOTAL</td>
+                </tr>',
+                'header2' => ''
+            ];
+
+        default:
+            return [
+                'header1' => '<tr>',
+                'header2' => ''
+            ];
+    }
+}
+
+function getAdministrativeLevel($kode)
+{
+    // Remove dots and clean the code
+    $kodeClean = str_replace('.', '', $kode);
+
+    if ($kodeClean == '6210') {
+        return 'kabupaten';
+    } elseif (strlen($kodeClean) == 6 && substr($kodeClean, 0, 4) == '6210') {
+        return 'kecamatan';
+    } elseif (strlen($kodeClean) == 10 && substr($kodeClean, 0, 4) == '6210') {
+        return 'desa';
+    }
+
+    return 'desa'; // Default to desa for unknown patterns
+}
+
+function formatKode($kode)
+{
+    // Convert kode to string and remove any existing dots
+    $kode = str_replace('.', '', $kode);
+
+    if ($kode == '6210') {
+        return '62.10'; // KABUPATEN format
+    } elseif (strlen($kode) == 6 && substr($kode, 0, 4) == '6210') {
+        // KECAMATAN format: 621001 -> 62.10.01
+        return '62.10.' . substr($kode, 4, 2);
+    } elseif (strlen($kode) == 10 && substr($kode, 0, 4) == '6210') {
+        // DESA format: 6210011001 -> 62.10.01.10.01
+        return '62.10.' . substr($kode, 4, 2) . '.' . substr($kode, 6, 2) . '.' . substr($kode, 8, 2);
+    }
+
+    return $kode; // Return original if doesn't match pattern
+}
+
+function formatWilayah($kode, $wilayah)
+{
+    // Convert kode to string and remove any existing dots
+    $kode = str_replace('.', '', $kode);
+
+    if ($kode == '6210') {
+        return 'KABUPATEN ' . $wilayah;
+    } elseif (strlen($kode) == 6 && substr($kode, 0, 4) == '6210') {
+        return 'KECAMATAN ' . $wilayah;
+    } elseif (strlen($kode) == 10 && substr($kode, 0, 10) == '6210021012') {
+        return 'KUALA ' . $wilayah;
+    }
+
+    return $wilayah; // Return original if doesn't match pattern
+}
+
+// Format numbers with dot as thousand separator (Indonesian format)
+function parseNumericValue($value): array
+{
+    if (is_string($value)) {
+        $clean = str_replace("\xC2\xA0", ' ', $value);
+        $clean = trim($clean);
+        if ($clean === '' || $clean === '-' || $clean === '--') {
+            return [
+                'is_numeric' => false,
+                'raw' => $clean,
+            ];
+        }
+
+        $collapsed = preg_replace('/\s+/', '', $clean);
+        $hasComma = strpos($collapsed, ',') !== false;
+        $hasDot = strpos($collapsed, '.') !== false;
+
+        $normalized = $collapsed;
+        if ($hasDot && !$hasComma) {
+            $segments = explode('.', $collapsed);
+            $lastSegment = end($segments);
+            if (strlen($lastSegment) === 3) {
+                $normalized = implode('', $segments);
+            }
+        } elseif ($hasDot && $hasComma) {
+            $normalized = str_replace('.', '', $collapsed);
+        }
+
+        $normalized = str_replace(',', '.', $normalized);
+
+        if (is_numeric($normalized)) {
+            $value = $normalized;
+        } else {
+            return [
+                'is_numeric' => false,
+                'raw' => $clean,
+            ];
+        }
+    }
+
+    if (is_numeric($value)) {
+        $number = $value + 0;
+        $numberString = (string) $number;
+        $decimalPart = strpos($numberString, '.') !== false
+            ? rtrim(substr($numberString, strpos($numberString, '.') + 1), '0')
+            : '';
+        $decimals = $decimalPart === '' ? 0 : strlen($decimalPart);
+        if ($decimals === 0) {
+            $number = (int) round($number);
+        }
+        return [
+            'is_numeric' => true,
+            'value' => $number,
+            'decimals' => $decimals,
+        ];
+    }
+
+    return [
+        'is_numeric' => false,
+        'raw' => $value,
+    ];
+}
+function formatNumber($number)
+{
+    $parsed = parseNumericValue($number);
+    if (!$parsed['is_numeric']) {
+        return is_string($number) ? trim((string) $number) : $number;
+    }
+
+    $decimals = $parsed['decimals'] > 0 ? min($parsed['decimals'], 4) : 0;
+
+    if ($decimals === 0) {
+        return number_format($parsed['value'], 0, '', '.');
+    }
+
+    return number_format($parsed['value'], $decimals, ',', '.');
+}
+// Check if a column should be formatted as a number
+function shouldFormatAsNumber($columnName)
+{
+    // Convert to string and trim whitespace
+    $columnName = trim((string) $columnName);
+
+    // Check for exact matches (case-insensitive)
+    $exactMatches = ['L', 'P', 'JML', 'JUMLAH'];
+    if (in_array(strtoupper($columnName), $exactMatches)) {
+        return true;
+    }
+
+    // Check for patterns using regex
+    $patterns = [
+        '/^L$/i',                    // L column
+        '/^P$/i',                    // P column  
+        '/^JML$/i',                  // JML column
+        '/^JUMLAH$/i',              // JUMLAH column
+        '/USIA/i',                  // Any column containing USIA
+        '/RASIO/i',                 // Any column containing RASIO
+        '/PERSEN/i',                // Any column containing PERSEN
+        '/LAJU/i',                  // Any column containing LAJU
+        '/\%/',                     // Any column containing %
+        '/^L\s+\d+$/i',            // L followed by space and number (age)
+        '/^P\s+\d+$/i',            // P followed by space and number (age)
+        '/^JML\s+\d+$/i'           // JML followed by space and number (age)
+    ];
+
+    foreach ($patterns as $pattern) {
+        if (preg_match($pattern, $columnName)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function processDataWithCalculations($data, $kategori, $kecamatan = '', $desa = '', $rentang_umur = '', $umur_dari = '', $umur_sampai = '')
+{
+    if (empty($data))
+        return $data;
+
+    $processed = [];
+    foreach ($data as $row) {
+        $newRow = $row;
+
+        // Remove IDEM column if it exists
+        if (isset($newRow['IDEM'])) {
+            unset($newRow['IDEM']);
+        }
+
+        // Format KODE and WILAYAH columns according to instruksi3.txt
+        if (isset($newRow['KODE'])) {
+            $originalKode = $newRow['KODE'];
+            $kodeClean = str_replace('.', '', $originalKode);
+
+            // Skip row if it doesn't match filter criteria
+            if ($kecamatan) {
+                if ($desa) {
+                    // Filter by specific desa
+                    if ($kodeClean != $desa)
+                        continue;
+                } else {
+                    // Filter by kecamatan (show kecamatan row and all desa in that kecamatan)
+                    if (strlen($kodeClean) == 6 && $kodeClean != $kecamatan)
+                        continue;
+                    if (strlen($kodeClean) == 10 && substr($kodeClean, 0, 6) != $kecamatan)
+                        continue;
+                    if (strlen($kodeClean) == 4)
+                        continue; // Skip kabupaten row when filtering by kecamatan
+                }
+            }
+
+            $newRow['KODE'] = formatKode($originalKode);
+
+            // Format WILAYAH if it exists
+            if (isset($newRow['WILAYAH'])) {
+                $newRow['WILAYAH'] = formatWilayah($originalKode, $newRow['WILAYAH']);
+            }
+        }
+
+        // Apply age range filter for umur_tunggal category
+        if ($kategori === 'umur_tunggal' && $rentang_umur === 'custom' && $umur_dari !== '' && $umur_sampai !== '') {
+            $filteredRow = ['KODE' => $newRow['KODE'], 'WILAYAH' => $newRow['WILAYAH']];
+
+            // Filter columns based on age range
+            for ($age = intval($umur_dari); $age <= intval($umur_sampai); $age++) {
+                // Column names in JSON have spaces around them: " L 0 ", " P 0 ", " JML 0 "
+                $lKey = " L $age ";
+                $pKey = " P $age ";
+                $jmlKey = " JML $age ";
+
+                if (isset($newRow[$lKey]))
+                    $filteredRow[$lKey] = $newRow[$lKey];
+                if (isset($newRow[$pKey]))
+                    $filteredRow[$pKey] = $newRow[$pKey];
+                if (isset($newRow[$jmlKey]))
+                    $filteredRow[$jmlKey] = $newRow[$jmlKey];
+            }
+
+            $newRow = $filteredRow;
+        }
+
+        // Perform calculations based on category
+        $processed[] = $newRow;
+    }
+
+    return $processed;
+}
+
+if ($kategori && $tahun && $semester) {
+    $json_file = "data/kategori_{$kategori}.json";
+    if (file_exists($json_file)) {
+        $all_data = json_decode(file_get_contents($json_file), true);
+        $key = "{$tahun}_{$semester}";
+        $data = $all_data[$key] ?? [];
+        $data = processDataWithCalculations($data, $kategori, $kecamatan, $desa, $rentang_umur, $umur_dari, $umur_sampai);
+    }
+}
+$total_entries = count($data);
+$total_pages = $total_entries > 0 ? (int) ceil($total_entries / $per_page) : 1;
+$page = min($page, $total_pages);
+$offset = ($page - 1) * $per_page;
+$displayData = $total_entries > 0 ? array_slice($data, $offset, $per_page) : [];
+$start_entry = $total_entries > 0 ? $offset + 1 : 0;
+$end_entry = $total_entries > 0 ? min($offset + $per_page, $total_entries) : 0;
+?>
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#1e40af">
+    <title>Sistem Informasi Penyajian Data Agregat Kependudukan - Kabupaten Gunung Mas</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="desktop.css">
+    <link rel="stylesheet" href="mobile.css" media="(max-width: 768px)">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --pink: #e6007a;
+            --pink-2: #f5365c;
+            --orange: #f56036;
+            --soft-bg: #f7f9fc;
+            --soft-border: #eef2f7;
+            --text-dark: #0f172a;
+        }
+
+        body {
+            font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--soft-bg);
+            color: var(--text-dark);
+        }
+
+        .main-layout {
+            min-height: 100vh;
+            background: var(--soft-bg);
+        }
+
+        .hero-banner {
+            background: linear-gradient(87deg, #f5365c 0%, #f56036 100%);
+            color: #fff;
+            padding: 28px 20px 120px;
+            position: relative;
+            overflow: hidden;
+            box-shadow: 0 12px 30px rgba(245, 86, 82, 0.35);
+        }
+
+        .hero-banner::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.08), transparent 45%),
+                        radial-gradient(circle at 80% 0%, rgba(255, 255, 255, 0.08), transparent 35%);
+            pointer-events: none;
+        }
+
+        .hero-inner {
+            position: relative;
+            z-index: 1;
+        }
+
+        .hero-title {
+            letter-spacing: 0.5px;
+        }
+
+        .hero-chip {
+            background: rgba(255, 255, 255, 0.16);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: #fff;
+        }
+
+        .filter-card {
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+            border: 1px solid var(--soft-border);
+            margin-top: -90px;
+        }
+
+        .filter-card h2 {
+            color: #0f172a;
+        }
+
+        .filter-card .form-label {
+            color: #4b5563;
+            font-weight: 600;
+        }
+
+        .filter-card .form-control {
+            background: #f8fafc;
+            border-color: #e5e7eb;
+            border-radius: 12px;
+            transition: all 0.2s ease;
+        }
+
+        .filter-card .form-control:focus {
+            border-color: var(--pink);
+            box-shadow: 0 0 0 3px rgba(229, 0, 122, 0.12);
+            background: #fff;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, var(--pink), var(--pink-2));
+            color: #fff;
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 12px 24px rgba(229, 0, 122, 0.25);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 16px 32px rgba(229, 0, 122, 0.3);
+        }
+
+        .btn-secondary {
+            background: #eef2ff;
+            color: #1f2937;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .btn-secondary:hover {
+            background: #e5e7eb;
+        }
+
+        .action-buttons {
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+
+        .action-buttons a {
+            border-radius: 10px;
+            font-weight: 600;
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.08);
+            border: 1px solid #e5e7eb;
+            color: #0f172a;
+        }
+
+        .action-buttons a.btn-excel {
+            background: #e8f6ec;
+            color: #16a34a;
+            border-color: #d1f1dc;
+        }
+
+        .action-buttons a.btn-pdf {
+            background: #ffecee;
+            color: #dc2626;
+            border-color: #ffd6db;
+        }
+
+        .action-buttons a.btn-chart {
+            background: #e6f0ff;
+            color: #2563eb;
+            border-color: #d7e6ff;
+        }
+
+        .data-card {
+            background: #fff;
+            border-radius: 18px;
+            border: 1px solid var(--soft-border);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.12);
+        }
+
+        .table-container {
+            border-radius: 12px;
+            box-shadow: none;
+            border: 1px solid #e5e7eb;
+        }
+
+        .data-table th {
+            background: #f4f6fb;
+            color: #111827;
+            border: 1px solid #e5e7eb;
+        }
+
+        .data-table td {
+            font-size: 0.9rem;
+        }
+
+        .table-info {
+            background: #f0f6ff;
+            border: 1px solid #d9e6ff;
+            border-radius: 12px;
+        }
+
+        .scroll-controls {
+            display: none !important;
+        }
+
+        @media (max-width: 768px) {
+            .hero-banner {
+                padding-bottom: 110px;
+            }
+
+            .filter-card {
+                margin-top: -72px;
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <?php include 'public_sidebar.php'; ?>
+    <div class="main-layout md:ml-64">
+        <section class="hero-banner">
+            <div class="hero-inner max-w-7xl mx-auto px-4 sm:px-8">
+                <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-6">
+                    <div class="flex items-center gap-4">
+                        <div class="w-16 h-16 rounded-2xl bg-white/15 flex items-center justify-center border border-white/30 backdrop-blur">
+                            <img src="logo/gunungmas.png" alt="Logo Gunung Mas" class="w-12 h-14 object-contain">
+                        </div>
+                        <div>
+                            <p class="hero-chip inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wide mb-2">
+                                <i class="fa fa-chart-pie mr-2"></i> SIPEDAK v2
+                            </p>
+                            <h1 class="hero-title text-2xl sm:text-3xl font-bold leading-tight">Sistem Informasi Penyajian Data Agregat Kependudukan</h1>
+                            <p class="text-sm sm:text-base text-white/90 font-medium mt-1">Kabupaten Gunung Mas • Dinas Kependudukan dan Pencatatan Sipil</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-3 self-start">
+                        <div class="text-white text-sm font-semibold bg-white/15 border border-white/25 px-4 py-2 rounded-full flex items-center gap-2">
+                            <i class="far fa-clock text-base"></i>
+                            <span><?php echo date('d M Y'); ?></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <main class="max-w-7xl mx-auto px-4 sm:px-8 relative -mt-16 pb-10">
+            <!-- Filter Form -->
+            <div class="filter-card p-6 sm:p-8 mb-8 no-print">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
+                    <div>
+                        <h2 class="text-lg sm:text-xl font-bold text-gray-900 flex items-center gap-2">
+                            <i class="fas fa-filter text-pink-500"></i>
+                            Filter Data Kependudukan
+                        </h2>
+                        <p class="text-sm text-gray-600">Pilih kategori, tahun, dan semester untuk menampilkan data</p>
+                    </div>
+                    <span class="text-xs font-semibold uppercase text-pink-600 bg-pink-50 border border-pink-100 px-3 py-1 rounded-full">Wajib pilih kategori, tahun, semester</span>
+                </div>
+
+                <form method="get" id="filterForm">
+                    <input type="hidden" name="per_page" id="perPageInput" value="<?php echo $per_page; ?>">
+                    <input type="hidden" name="page" id="pageInput" value="<?php echo $page; ?>">
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 items-end">
+                        <div class="form-group">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-list-alt text-pink-500"></i>Kategori
+                            </label>
+                            <select name="kategori" class="form-control py-2 text-sm" required>
+                                <option value="">Pilih Kategori</option>
+                                <?php foreach ($kategori_list as $key => $val) { ?>
+                                        <option value="<?php echo $key; ?>" <?php echo ($kategori == $key) ? 'selected' : ''; ?>>
+                                            <?php echo $val; ?>
+                                        </option>
+                                <?php } ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-calendar text-pink-500"></i>Tahun
+                            </label>
+                            <select name="tahun" class="form-control py-2 text-sm" required>
+                                <option value="">Pilih Tahun</option>
+                                <?php foreach ($tahun_list as $th) { ?>
+                                        <option value="<?php echo $th; ?>" <?php echo ($tahun == $th) ? 'selected' : ''; ?>>
+                                            <?php echo $th; ?>
+                                        </option>
+                                <?php } ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-clock text-pink-500"></i>Semester
+                            </label>
+                            <select name="semester" class="form-control py-2 text-sm" required>
+                                <option value="">Pilih Semester</option>
+                                <?php foreach ($semester_list as $key => $val) { ?>
+                                        <option value="<?php echo $key; ?>" <?php echo ($semester == $key) ? 'selected' : ''; ?>>
+                                            <?php echo $val; ?>
+                                        </option>
+                                <?php } ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-map text-pink-500"></i>Kecamatan
+                            </label>
+                            <select name="kecamatan" id="kecamatan" class="form-control py-2 text-sm">
+                                <option value="">Semua Kecamatan</option>
+                                <?php foreach ($kecamatan_list as $key => $val) { ?>
+                                        <option value="<?php echo $key; ?>" <?php echo ($kecamatan == $key) ? 'selected' : ''; ?>>
+                                            <?php echo $val; ?>
+                                        </option>
+                                <?php } ?>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-home text-pink-500"></i>Desa/Kelurahan
+                            </label>
+                            <select name="desa" id="desa" class="form-control py-2 text-sm">
+                                <option value="">Semua Desa</option>
+                            </select>
+                        </div>
+
+                        <!-- Rentang Umur Filter (only for umur_tunggal) -->
+                        <div class="form-group" id="rentang-umur-group" style="display: none;">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-calendar-alt text-pink-500"></i>Rentang Umur
+                            </label>
+                            <select name="rentang_umur" id="rentang_umur" class="form-control py-2 text-sm">
+                                <option value="all">Semua Umur</option>
+                                <option value="custom" <?php echo ($rentang_umur == 'custom') ? 'selected' : ''; ?>>Pilihan Rentang Umur</option>
+                            </select>
+                        </div>
+
+                        <!-- Custom Age Range (only when custom is selected) -->
+                        <div class="form-group" id="custom-range-group" style="display: none;">
+                            <label class="form-label text-xs mb-1 flex items-center gap-1">
+                                <i class="fas fa-arrows-alt-h text-pink-500"></i>Dari - Sampai
+                            </label>
+                            <div class="flex gap-2">
+                                <select name="umur_dari" id="umur_dari" class="form-control py-2 text-sm flex-1">
+                                    <option value="">Dari</option>
+                                    <?php for ($i = 0; $i <= 120; $i++) { ?>
+                                            <option value="<?php echo $i; ?>" <?php echo ($umur_dari == $i) ? 'selected' : ''; ?>>
+                                                <?php echo $i; ?> tahun
+                                            </option>
+                                    <?php } ?>
+                                </select>
+                                <select name="umur_sampai" id="umur_sampai" class="form-control py-2 text-sm flex-1">
+                                    <option value="">Sampai</option>
+                                    <?php for ($i = 0; $i <= 120; $i++) { ?>
+                                            <option value="<?php echo $i; ?>" <?php echo ($umur_sampai == $i) ? 'selected' : ''; ?>>
+                                                <?php echo $i; ?> tahun
+                                            </option>
+                                    <?php } ?>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Buttons -->
+                        <div class="form-group md:col-span-2 xl:col-span-4">
+                            <div class="flex flex-col sm:flex-row gap-2 justify-end w-full">
+                                <button type="button" class="btn-secondary py-2 px-4 text-sm sm:w-auto"
+                                        onclick="window.location.href = window.location.pathname;">
+                                    <i class="fas fa-undo mr-1 text-sm"></i>Reset
+                                </button>
+                                <button type="submit" class="btn-primary py-2 px-4 text-sm sm:w-auto">
+                                    <i class="fas fa-search mr-1 text-sm"></i>Tampilkan Data
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+        <?php if ($data) {
+            $kategori_display = $kategori_list[$kategori] ?? strtoupper(str_replace('_', ' ', $kategori));
+            $semester_display = $semester_list[$semester] ?? "Semester $semester";
+            $lokasi_display = 'Kabupaten Gunung Mas';
+            if ($desa) {
+                $lokasi_display = $desa_list[$kecamatan][$desa] ?? $desa;
+            } elseif ($kecamatan) {
+                $lokasi_display = 'Kecamatan ' . ($kecamatan_list[$kecamatan] ?? $kecamatan);
+            }
+            ?>
+                <div class="data-card p-6 sm:p-7 mb-8">
+                    <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 border-b border-gray-100 pb-4">
+                        <div>
+                            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-1">Data Tabel</p>
+                            <h3 class="text-xl font-bold text-gray-900"><?php echo $kategori_display; ?></h3>
+                            <p class="text-sm text-gray-600 mt-1">Periode: <?php echo $tahun; ?> • <?php echo $semester_display; ?> · <?php echo $lokasi_display; ?></p>
+                        </div>
+                        <div class="action-buttons no-print flex flex-wrap">
+                            <a href="export_excel.php?kategori=<?php echo $kategori; ?>&tahun=<?php echo $tahun; ?>&semester=<?php echo $semester; ?>&kecamatan=<?php echo $kecamatan; ?>&desa=<?php echo $desa; ?>&rentang_umur=<?php echo $rentang_umur; ?>&umur_dari=<?php echo $umur_dari; ?>&umur_sampai=<?php echo $umur_sampai; ?>" class="btn-download btn-excel flex items-center gap-2 px-4 py-2">
+                                <i class="fas fa-file-excel"></i>
+                                Excel
+                            </a>
+                            <a href="export_pdf.php?kategori=<?php echo $kategori; ?>&tahun=<?php echo $tahun; ?>&semester=<?php echo $semester; ?>&kecamatan=<?php echo $kecamatan; ?>&desa=<?php echo $desa; ?>&rentang_umur=<?php echo $rentang_umur; ?>&umur_dari=<?php echo $umur_dari; ?>&umur_sampai=<?php echo $umur_sampai; ?>" class="btn-download btn-pdf flex items-center gap-2 px-4 py-2" target="_blank">
+                                <i class="fas fa-file-pdf"></i>
+                                PDF
+                            </a>
+                            <a href="bar_chart.php?kategori=<?php echo $kategori; ?>&tahun=<?php echo $tahun; ?>&semester=<?php echo $semester; ?>&kecamatan=<?php echo $kecamatan; ?>&desa=<?php echo $desa; ?>&rentang_umur=<?php echo $rentang_umur; ?>&umur_dari=<?php echo $umur_dari; ?>&umur_sampai=<?php echo $umur_sampai; ?>" class="btn-download btn-chart flex items-center gap-2 px-4 py-2" target="_blank">
+                                <i class="fas fa-chart-bar"></i>
+                                Diagram
+                            </a>
+                        </div>
+                    </div>
+
+                    <!-- Table Information (Desktop & Mobile) -->
+                    <div class="table-info mt-5 mb-4 p-4">
+                        <div class="flex items-center mb-1 text-blue-700">
+                            <i class="fas fa-info-circle mr-2"></i>
+                            <strong>Informasi Penting:</strong>
+                        </div>
+                        <ul class="list-disc list-inside space-y-1 text-sm text-gray-700">
+                            <li>Ketika membuka file format <strong>xls</strong> di laptop klik <strong>yes/ya</strong> (jika ada notif konfirmasi)</li>
+                        </ul>
+                    </div>
+
+                    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 my-4">
+                        <div class="flex items-center text-sm text-gray-700 gap-2">
+                            <span>Show</span>
+                            <select id="entriesPerPage" class="border rounded-lg px-3 py-1 focus:outline-none focus:ring-2 focus:ring-pink-400">
+                                <?php foreach ($per_page_options as $option) { ?>
+                                        <option value="<?php echo $option; ?>" <?php echo ($per_page == $option) ? 'selected' : ''; ?>>
+                                            <?php echo $option; ?>
+                                        </option>
+                                <?php } ?>
+                            </select>
+                            <span>entries</span>
+                        </div>
+                        <div class="text-sm text-gray-600 text-left md:text-right">
+                            <?php if ($total_entries > 0) { ?>
+                                    Showing <?php echo $start_entry; ?> to <?php echo $end_entry; ?> of <?php echo $total_entries; ?> entries
+                            <?php } else { ?>
+                                    No entries to display
+                            <?php } ?>
+                        </div>
+                    </div>
+
+                    <!-- Data Table -->
+                    <div class="table-container">
+                        <div class="table-wrapper">
+                            <div id="tableContainer" class="overflow-x-auto">
+                                <table class="data-table">
+                                    <thead>
+                                        <?php
+                                        $headers = generateCategoryHeader($kategori, $rentang_umur, $umur_dari, $umur_sampai);
+                                        echo $headers['header1'];
+                                        if (!empty($headers['header2'])) {
+                                            echo $headers['header2'];
+                                        }
+                                        ?>
+                                    </thead>
+                                    <tbody>
+                                        <?php foreach ($displayData as $row) {
+                                            // Determine administrative level for color coding
+                                            $levelClass = '';
+                                            if (isset($row['KODE'])) {
+                                                $level = getAdministrativeLevel($row['KODE']);
+                                                $levelClass = 'level-' . $level;
+                                            }
+                                            ?>
+                                            <tr class="<?php echo $levelClass; ?>">
+                                            <?php foreach ($row as $columnName => $cell) {
+                                                if (shouldFormatAsNumber($columnName)) {
+                                                    $displayValue = formatNumber($cell);
+                                                } elseif (is_string($cell)) {
+                                                    $displayValue = trim($cell);
+                                                } else {
+                                                    $displayValue = $cell;
+                                                }
+                                                ?>
+                                                <td><?php echo htmlspecialchars((string) $displayValue); ?></td>
+                                            <?php } ?>
+                                            </tr>
+                                        <?php } ?>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <?php if ($total_pages > 1) {
+                        $max_visible_pages = 5;
+                        $start_page = max(1, $page - 2);
+                        $end_page = min($total_pages, $start_page + $max_visible_pages - 1);
+                        if ($end_page - $start_page + 1 < $max_visible_pages) {
+                            $start_page = max(1, $end_page - $max_visible_pages + 1);
+                        }
+                        ?>
+                        <div class="flex flex-wrap items-center justify-center md:justify-end gap-2 mt-4">
+                            <?php if ($page > 1) { ?>
+                                    <a href="<?php echo buildQueryString(['page' => $page - 1, 'per_page' => $per_page]); ?>" class="px-3 py-1 border rounded-lg text-sm text-gray-700 hover:bg-pink-50">Previous</a>
+                            <?php } else { ?>
+                                    <span class="px-3 py-1 border rounded-lg text-sm text-gray-400 bg-gray-100 cursor-not-allowed">Previous</span>
+                            <?php } ?>
+
+                            <?php for ($p = $start_page; $p <= $end_page; $p++) { ?>
+                                    <?php $isActive = $p === $page; ?>
+                                    <a href="<?php echo buildQueryString(['page' => $p, 'per_page' => $per_page]); ?>" class="px-3 py-1 border rounded-lg text-sm <?php echo $isActive ? 'bg-pink-600 text-white border-pink-600' : 'text-gray-700 hover:bg-pink-50'; ?>">
+                                        <?php echo $p; ?>
+                                    </a>
+                            <?php } ?>
+
+                            <?php if ($page < $total_pages) { ?>
+                                    <a href="<?php echo buildQueryString(['page' => $page + 1, 'per_page' => $per_page]); ?>" class="px-3 py-1 border rounded-lg text-sm text-gray-700 hover:bg-pink-50">Next</a>
+                            <?php } else { ?>
+                                    <span class="px-3 py-1 border rounded-lg text-sm text-gray-400 bg-gray-100 cursor-not-allowed">Next</span>
+                            <?php } ?>
+                        </div>
+                    <?php } ?>
+                </div>
+
+        <?php } elseif ($kategori && $tahun && $semester) { ?>
+                <div class="alert alert-error text-center">
+                    <i class="fas fa-exclamation-triangle mr-2"></i>
+                    <strong>Data tidak ditemukan.</strong> Silakan periksa kembali filter yang dipilih.
+                </div>
+        <?php } ?>
+        <!--------------------------------------------------------------------------------->
+            <?php if (($kategori === 'jumlah_penduduk' || $kategori === 'kepala_keluarga') && $tahun && $semester): ?>
+            <?php
+            // Extract data for dashboard based on selected filters
+            $jsonFile = __DIR__ . "/data/kategori_{$kategori}.json";
+            $stats = ['total' => 0, 'male' => 0, 'female' => 0, 'growth' => 0, 'growth_pct' => 0, 'location' => 'Kabupaten Gunung Mas'];
+            $chartData = ['labels' => [], 'values' => [], 'male' => [], 'female' => []];
+            $dataAvailable = false;
+            $periodNotFound = false;
+
+            if (file_exists($jsonFile)) {
+                $jsonContent = file_get_contents($jsonFile);
+                $allData = json_decode($jsonContent, true);
+
+                if ($allData && is_array($allData)) {
+                    // Determine which administrative level to show based on filters
+                    $targetKode = '';
+                    $targetKodeWithDots = '';
+
+                    if ($desa) {
+                        // Show specific desa
+                        $targetKode = str_replace('.', '', $desa);
+                        $targetKodeWithDots = $desa; // Keep original format with dots
+                        $stats['location'] = $desa_list[$kecamatan][$desa] ?? 'Desa';
+                    } elseif ($kecamatan) {
+                        // Show specific kecamatan
+                        $targetKode = str_replace('.', '', $kecamatan);
+                        $targetKodeWithDots = $kecamatan; // Keep original format with dots
+                        $stats['location'] = 'Kecamatan ' . ($kecamatan_list[$kecamatan] ?? '');
+                    } else {
+                        // Show kabupaten
+                        $targetKode = '6210';
+                        $targetKodeWithDots = '62.10';
+                        $stats['location'] = 'Kabupaten Gunung Mas';
+                    }
+
+                    // Sort keys chronologically
+                    $keys = array_keys($allData);
+                    usort($keys, function ($a, $b) {
+                        list($yA, $sA) = explode('_', $a);
+                        list($yB, $sB) = explode('_', $b);
+                        if ($yA != $yB)
+                            return $yA - $yB;
+                        return $sA - $sB;
+                    });
+
+                    // Find current period index
+                    $currentKey = "{$tahun}_{$semester}";
+                    $currentIndex = array_search($currentKey, $keys);
+
+                    // Check if selected period exists in data
+                    if ($currentIndex === false) {
+                        $periodNotFound = true;
+                    }
+
+                    // Extract data for chart (show historical trend)
+                    foreach ($keys as $idx => $key) {
+                        $period = $allData[$key];
+                        if (!is_array($period))
+                            continue;
+
+                        // Find the row matching our target code
+                        foreach ($period as $row) {
+                            $rowKode = str_replace('.', '', $row['KODE'] ?? '');
+                            $rowKodeWithDots = $row['KODE'] ?? '';
+
+                            // Match either format (with or without dots)
+                            if ($rowKode === $targetKode || $rowKodeWithDots === $targetKodeWithDots) {
+                                $L = 0;
+                                $P = 0;
+                                $JML = 0;
+                                $dataFound = false;
+
+                                // For KEPALA KELUARGA category - only use KK-specific formats
+                                if ($kategori === 'kepala_keluarga') {
+                                    // Try format: LK, PR, JML (kepala_keluarga 2025_1 and 2024_2)
+                                    if (isset($row[' LK ']) && isset($row[' PR ']) && isset($row[' JML '])) {
+                                        // Verify this is NOT a population row (should not have L and P columns)
+                                        if (!isset($row[' L ']) && !isset($row[' P '])) {
+                                            $L = (int) str_replace(['.', ' ', ','], '', $row[' LK '] ?? '0');
+                                            $P = (int) str_replace(['.', ' ', ','], '', $row[' PR '] ?? '0');
+                                            $JML = (int) str_replace(['.', ' ', ','], '', $row[' JML '] ?? '0');
+                                            $dataFound = true;
+                                        }
+                                    }
+                                    // Try format: KEPALA KELUARGA (L), (P), (JML) (kepala_keluarga 2024_1)
+                                    if (!$dataFound && isset($row[' KEPALA KELUARGA (L) ']) && isset($row[' KEPALA KELUARGA (P) ']) && isset($row[' KEPALA KELUARGA (JML) '])) {
+                                        $L = (int) str_replace(['.', ' ', ','], '', $row[' KEPALA KELUARGA (L) '] ?? '0');
+                                        $P = (int) str_replace(['.', ' ', ','], '', $row[' KEPALA KELUARGA (P) '] ?? '0');
+                                        $JML = (int) str_replace(['.', ' ', ','], '', $row[' KEPALA KELUARGA (JML) '] ?? '0');
+                                        $dataFound = true;
+                                    }
+                                    // Try format: KK LK, KK PR, KK JML (another possible format)
+                                    if (!$dataFound && isset($row[' KK LK ']) && isset($row[' KK PR ']) && isset($row[' KK JML '])) {
+                                        $L = (int) str_replace(['.', ' ', ','], '', $row[' KK LK '] ?? '0');
+                                        $P = (int) str_replace(['.', ' ', ','], '', $row[' KK PR '] ?? '0');
+                                        $JML = (int) str_replace(['.', ' ', ','], '', $row[' KK JML '] ?? '0');
+                                        $dataFound = true;
+                                    }
+                                    // Try format: KK (LK), KK (PR), KK (JML) (another possible format)
+                                    if (!$dataFound && isset($row[' KK (LK) ']) && isset($row[' KK (PR) ']) && isset($row[' KK (JML) '])) {
+                                        $L = (int) str_replace(['.', ' ', ','], '', $row[' KK (LK) '] ?? '0');
+                                        $P = (int) str_replace(['.', ' ', ','], '', $row[' KK (PR) '] ?? '0');
+                                        $JML = (int) str_replace(['.', ' ', ','], '', $row[' KK (JML) '] ?? '0');
+                                        $dataFound = true;
+                                    }
+
+                                    if (!$dataFound) {
+                                        continue; // Skip if no valid KK format found
+                                    }
+                                }
+                                // For JUMLAH PENDUDUK category - only use population-specific formats
+                                elseif ($kategori === 'jumlah_penduduk') {
+                                    // Try format: L, P, JML (jumlah_penduduk 2025_1)
+                                    if (isset($row[' L ']) && isset($row[' P ']) && isset($row[' JML '])) {
+                                        // Verify this is NOT a KK row (should not have LK and PR columns)
+                                        if (!isset($row[' LK ']) && !isset($row[' PR '])) {
+                                            $L = (int) str_replace(['.', ' ', ','], '', $row[' L '] ?? '0');
+                                            $P = (int) str_replace(['.', ' ', ','], '', $row[' P '] ?? '0');
+                                            $JML = (int) str_replace(['.', ' ', ','], '', $row[' JML '] ?? '0');
+                                            $dataFound = true;
+                                        }
+                                    }
+                                    // Try format: PENDUDUK (L), PENDUDUK (P), PENDUDUK (JML) (jumlah_penduduk 2024_1)
+                                    if (!$dataFound && isset($row[' PENDUDUK (L) ']) && isset($row[' PENDUDUK (P) ']) && isset($row[' PENDUDUK (JML) '])) {
+                                        $L = (int) str_replace(['.', ' ', ','], '', $row[' PENDUDUK (L) '] ?? '0');
+                                        $P = (int) str_replace(['.', ' ', ','], '', $row[' PENDUDUK (P) '] ?? '0');
+                                        $JML = (int) str_replace(['.', ' ', ','], '', $row[' PENDUDUK (JML) '] ?? '0');
+                                        $dataFound = true;
+                                    }
+
+                                    if (!$dataFound) {
+                                        continue; // Skip if no valid population format found
+                                    }
+                                } else {
+                                    continue; // Skip if category is not recognized
+                                }
+
+                                // Only add data if valid format was found
+                                if ($dataFound) {
+                                    list($y, $s) = explode('_', $key);
+                                    $chartData['labels'][] = "$y Sem $s";
+                                    $chartData['values'][] = $JML;
+                                    $chartData['male'][] = $L;
+                                    $chartData['female'][] = $P;
+                                    $dataAvailable = true;
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // Calculate stats from current selected period or fallback to latest
+                    if (!empty($chartData['values'])) {
+                        // Use data from selected period if available
+                        if ($currentIndex !== false && isset($chartData['values'][$currentIndex])) {
+                            // Period found - use exact data
+                            $stats['total'] = $chartData['values'][$currentIndex];
+                            $stats['male'] = $chartData['male'][$currentIndex] ?? 0;
+                            $stats['female'] = $chartData['female'][$currentIndex] ?? 0;
+
+                            // Calculate growth compared to previous period
+                            if ($currentIndex > 0 && isset($chartData['values'][$currentIndex - 1])) {
+                                $prev = $chartData['values'][$currentIndex - 1];
+                                $curr = $chartData['values'][$currentIndex];
+                                $stats['growth'] = $curr - $prev;
+                                $stats['growth_pct'] = $prev > 0 ? (($curr - $prev) / $prev) * 100 : 0;
+                            }
+
+                            // Mark that we found the exact period
+                            $periodNotFound = false;
+                        } else {
+                            // Period not found - use latest available data as fallback
+                            $latestIndex = count($chartData['values']) - 1;
+                            $stats['total'] = $chartData['values'][$latestIndex] ?? 0;
+                            $stats['male'] = $chartData['male'][$latestIndex] ?? 0;
+                            $stats['female'] = $chartData['female'][$latestIndex] ?? 0;
+
+                            if ($latestIndex > 0) {
+                                $prev = $chartData['values'][$latestIndex - 1];
+                                $curr = $chartData['values'][$latestIndex];
+                                $stats['growth'] = $curr - $prev;
+                                $stats['growth_pct'] = $prev > 0 ? (($curr - $prev) / $prev) * 100 : 0;
+                            }
+
+                            // Keep periodNotFound as true (was set earlier)
+                        }
+                    } else {
+                        // No data available at all
+                        $dataAvailable = false;
+                    }
+                }
+            }
+
+            // Determine label based on category
+            $labelTotal = ($kategori === 'kepala_keluarga') ? 'Total Kepala Keluarga' : 'Total Penduduk';
+            $labelTrend = ($kategori === 'kepala_keluarga') ? 'Tren Jumlah Kepala Keluarga' : 'Tren Jumlah Penduduk';
+            ?>
+
+            <!-- Statistics Dashboard -->
+        <div class="max-w-7xl mx-auto px-4 sm:px-8 py-6 no-print">
+            <!-- Period Not Found Warning - PROMINENT -->
+            <?php if ($periodNotFound && $dataAvailable): ?>
+                <div class="mb-6 bg-yellow-100 border-l-4 border-yellow-500 rounded-lg p-5 shadow-md">
+                    <div class="flex items-start">
+                        <i class="fas fa-exclamation-triangle text-yellow-600 text-2xl mt-1 mr-4"></i>
+                        <div class="flex-1">
+                            <p class="text-lg font-bold text-yellow-900 mb-2">⚠️ Data untuk periode yang dipilih tidak tersedia</p>
+                            <p class="text-sm text-yellow-800 mb-3">
+                                Data untuk <strong class="font-bold text-yellow-900">Tahun <?php echo $tahun; ?> Semester <?php echo $semester; ?></strong> tidak ditemukan dalam database <?php echo ($kategori === 'kepala_keluarga') ? 'Kepala Keluarga' : 'Jumlah Penduduk'; ?>.
+                            </p>
+                            <div class="bg-yellow-50 rounded p-3 mb-2">
+                                <p class="text-sm text-yellow-800">
+                                    <strong>📊 Menampilkan data periode terakhir yang tersedia:</strong><br>
+                                    <span class="text-lg font-bold text-yellow-900"><?php echo end($chartData['labels']); ?></span>
+                                </p>
+                            </div>
+                            <p class="text-xs text-yellow-700">
+                                <strong>Periode tersedia:</strong> 
+                                <?php echo implode(', ', $chartData['labels']); ?>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+        
+            <!-- No Data Available Warning -->
+            <?php if (!$dataAvailable): ?>
+                <div class="mb-4 bg-red-50 border border-red-200 rounded-lg p-4">
+                    <div class="flex items-start">
+                        <i class="fas fa-times-circle text-red-600 mt-1 mr-3"></i>
+                        <div>
+                            <p class="text-sm text-red-800 font-semibold">Data tidak tersedia</p>
+                            <p class="text-xs text-red-700 mt-1">
+                                Tidak ada data yang tersedia untuk wilayah dan periode yang dipilih.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+        
+            <?php if ($dataAvailable): ?>
+                <!-- Location Info -->
+                <div class="mb-4">
+                    <p class="text-sm text-gray-600">
+                        <i class="fas fa-map-marker-alt mr-2"></i>
+                        <strong><?php echo htmlspecialchars($stats['location']); ?></strong> - 
+                        Tahun <?php echo htmlspecialchars($tahun); ?> Semester <?php echo htmlspecialchars($semester); ?>
+                        <?php if ($periodNotFound): ?>
+                            <span class="text-xs text-yellow-600 ml-2">(Menampilkan data terakhir yang tersedia)</span>
+                        <?php endif; ?>
+                    </p>
+                </div>
+        
+                <!-- Statistics Highlights -->
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+                    <!-- Total -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1"><?php echo $labelTotal; ?></p>
+                                <h3 class="text-2xl font-bold text-gray-900"><?php echo number_format($stats['total']); ?></h3>
+                                <p class="text-xs text-green-600 font-medium mt-1"><?php echo $tahun; ?> Sem <?php echo $semester; ?></p>
+                            </div>
+                            <div class="w-14 h-14 rounded-xl bg-blue-50 flex items-center justify-center">
+                                <i class="fas fa-users text-2xl text-blue-600"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Laki-laki -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Laki-laki</p>
+                                <h3 class="text-2xl font-bold text-gray-900"><?php echo number_format($stats['male']); ?></h3>
+                                <p class="text-xs text-gray-500 mt-1"><?php echo ($kategori === 'kepala_keluarga') ? 'KK' : 'Jiwa'; ?></p>
+                            </div>
+                            <div class="w-14 h-14 rounded-xl bg-blue-50 flex items-center justify-center">
+                                <i class="fas fa-male text-2xl text-blue-600"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Perempuan -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Perempuan</p>
+                                <h3 class="text-2xl font-bold text-gray-900"><?php echo number_format($stats['female']); ?></h3>
+                                <p class="text-xs text-gray-500 mt-1"><?php echo ($kategori === 'kepala_keluarga') ? 'KK' : 'Jiwa'; ?></p>
+                            </div>
+                            <div class="w-14 h-14 rounded-xl bg-pink-50 flex items-center justify-center">
+                                <i class="fas fa-female text-2xl text-pink-600"></i>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Pertumbuhan -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Pertumbuhan</p>
+                                <h3 class="text-2xl font-bold text-gray-900"><?php echo number_format(abs($stats['growth_pct']), 2); ?>%</h3>
+                                <p class="text-xs <?php echo $stats['growth_pct'] >= 0 ? 'text-green-600' : 'text-red-600'; ?> font-medium mt-1">
+                                    <?php echo $stats['growth_pct'] >= 0 ? '+' : '-'; ?>        <?php echo number_format(abs($stats['growth_pct']), 2); ?>% sejak sem. lalu
+                                </p>
+                            </div>
+                            <div class="w-14 h-14 rounded-xl bg-green-50 flex items-center justify-center">
+                                <i class="fas fa-chart-line text-2xl text-green-600"></i>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Section -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+                    <!-- Trend Chart -->
+                    <div class="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <div>
+                                <h3 class="text-lg font-bold text-gray-900"><?php echo $labelTrend; ?></h3>
+                                <p class="text-xs <?php echo $stats['growth_pct'] >= 0 ? 'text-green-600' : 'text-red-600'; ?> font-medium mt-1">
+                                    <i class="fas fa-arrow-<?php echo $stats['growth_pct'] >= 0 ? 'up' : 'down'; ?> mr-1"></i><?php echo abs(number_format($stats['growth_pct'], 0)); ?>% <?php echo $stats['growth_pct'] >= 0 ? 'naik' : 'turun'; ?> di <?php echo $tahun; ?>
+                                </p>
+                            </div>
+                            <div class="text-blue-600">
+                                <i class="fas fa-chart-area text-xl"></i>
+                            </div>
+                        </div>
+                        <canvas id="trendChart" style="max-height: 300px;"></canvas>
+                    </div>
+
+                    <!-- Gender Comparison Chart -->
+                    <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+                        <div class="mb-4">
+                            <h3 class="text-lg font-bold text-gray-900">Komparasi Gender</h3>
+                        </div>
+                        <canvas id="genderChart" style="max-height: 300px;"></canvas>
+                        <div class="mt-4 text-center">
+                            <div class="flex items-center justify-center gap-4 text-xs">
+                                <div class="flex items-center gap-2">
+                                    <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+                                    <span class="text-gray-600">Laki-laki</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="w-3 h-3 rounded-full bg-pink-500"></span>
+                                    <span class="text-gray-600">Perempuan</span>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500 mt-2">Data periode yang dipilih.</p>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; // end dataAvailable ?>
+        </div>
+        <?php endif; ?>
+        <!--------------------------------------------------------------------------------->
+        <!-- Footer Info -->
+        <?php if (!$data) { ?>
+            <div class="text-center mt-12 p-8 bg-white rounded-2xl shadow-lg">
+                <div class="max-w-2xl mx-auto">
+                    <h3 class="text-xl font-semibold text-gray-800 mb-4">
+                        <i class="fas fa-info-circle text-blue-600 mr-2"></i>
+                        Tentang Sistem
+                    </h3>
+                    <p class="text-gray-600 leading-relaxed">
+                        SIPEDAK menyediakan akses terhadap data statistik kependudukan yang sudah dikategorikan Data Konsolidasi Bersih (DKB) dari pusat dan juga menyederhanakan bentuk file sehingga mudah di pahami pubik. Data tersedia dalam berbagai 
+                        kategori dan dapat difilter berdasarkan periode waktu serta wilayah administratif.
+                    </p>
+                
+                </div>
+            </div>
+        <?php } ?>
+        </main>
+    </div>
+    
+    <?php include 'footer.php'; ?>
+    
+    <script>
+        // Enhanced Scroll Table Function for Mobile (Horizontal Only - Vertical uses natural touch)
+        function scrollTable(direction) {
+            const container = document.getElementById('tableContainer');
+            const isMobile = window.innerWidth <= 768;
+            const scrollAmount = isMobile ? 150 : 300;
+            
+            // Only handle horizontal scrolling via buttons
+            if (direction === 'left') {
+                container.scrollLeft -= scrollAmount;
+            } else if (direction === 'right') {
+                container.scrollLeft += scrollAmount;
+            }
+            // Remove up/down button functionality - use natural touch scrolling instead
+            
+            updateScrollButtons();
+            updateScrollIndicators();
+        }
+        
+        function updateScrollButtons() {
+            const container = document.getElementById('tableContainer');
+            if (!container) return;
+            
+            // Only update horizontal scroll buttons
+            const leftBtn = document.getElementById('scrollLeft');
+            const rightBtn = document.getElementById('scrollRight');
+            
+            if (leftBtn && rightBtn) {
+                leftBtn.disabled = container.scrollLeft <= 0;
+                rightBtn.disabled = container.scrollLeft >= (container.scrollWidth - container.clientWidth);
+            }
+            
+            // Vertical scrolling is handled naturally by touch - no buttons needed
+        }
+        
+        function updateScrollIndicators() {
+            const container = document.getElementById('tableContainer');
+            if (!container) return;
+            
+            const leftIndicator = document.querySelector('.scroll-indicator.left');
+            const rightIndicator = document.querySelector('.scroll-indicator.right');
+            
+            if (leftIndicator && rightIndicator) {
+                const canScrollLeft = container.scrollLeft > 0;
+                const canScrollRight = container.scrollLeft < (container.scrollWidth - container.clientWidth);
+                
+                leftIndicator.style.display = canScrollLeft ? 'block' : 'none';
+                rightIndicator.style.display = canScrollRight ? 'block' : 'none';
+            }
+        }
+
+        // Show scroll controls on desktop only when horizontal overflow exists
+        function updateScrollControlsVisibility() {
+            const container = document.getElementById('tableContainer');
+            const controls = document.querySelector('.scroll-controls');
+            if (!controls) return;
+
+            // Only consider desktop widths
+            const isDesktop = window.innerWidth > 768;
+            if (!container || !isDesktop) {
+                controls.style.display = 'none';
+                return;
+            }
+
+            const needsHorizontalScroll = container.scrollWidth > container.clientWidth + 1; // +1 to avoid float errors
+            controls.style.display = needsHorizontalScroll ? 'flex' : 'none';
+        }
+        
+        // Enhanced touch and swipe support for natural mobile scrolling
+        function addTouchSupport() {
+            const container = document.getElementById('tableContainer');
+            if (!container) return;
+            
+            // Enhanced touch scrolling properties
+            container.style.webkitOverflowScrolling = 'touch';
+            container.style.scrollBehavior = 'smooth';
+            
+            // Enhanced mobile scrolling configuration
+            if (window.innerWidth <= 768) {
+                container.style.overflowX = 'auto';
+                container.style.overflowY = 'auto';
+                container.style.webkitOverflowScrolling = 'touch';
+                container.style.touchAction = 'pan-x pan-y';
+                container.style.display = 'block';
+                container.style.position = 'relative';
+                
+                // Ensure table is properly configured for scrolling
+                const table = container.querySelector('.data-table');
+                if (table) {
+                    table.style.minWidth = '1000px';
+                    table.style.width = 'max-content';
+                    table.style.tableLayout = 'auto';
+                    table.style.whiteSpace = 'nowrap';
+                }
+                
+                // Force a repaint to ensure scrolling works
+                container.style.transform = 'translateZ(0)';
+                
+                console.log('Mobile touch scrolling configured:', {
+                    containerWidth: container.clientWidth,
+                    tableWidth: table ? table.scrollWidth : 'no table',
+                    overflowX: container.style.overflowX,
+                    overflowY: container.style.overflowY
+                });
+            }
+            
+            // Update buttons and indicators on scroll
+            container.addEventListener('scroll', () => {
+                updateScrollButtons();
+                updateScrollIndicators();
+            });
+        }
+        
+        // Dynamic Desa Dropdown
+        const desaData = <?php echo json_encode($desa_list); ?>;
+        const kecamatanSelect = document.getElementById('kecamatan');
+        const desaSelect = document.getElementById('desa');
+        const selectedDesa = '<?php echo $desa; ?>';
+        const filterFormElement = document.getElementById('filterForm');
+        const perPageInputElement = document.getElementById('perPageInput');
+        const pageInputElement = document.getElementById('pageInput');
+        const entriesPerPageSelect = document.getElementById('entriesPerPage');
+        
+        function updateDesaOptions() {
+            const selectedKecamatan = kecamatanSelect.value;
+            desaSelect.innerHTML = '<option value="">Semua Desa/Kelurahan</option>';
+            
+            if (selectedKecamatan && desaData[selectedKecamatan]) {
+                Object.entries(desaData[selectedKecamatan]).forEach(([code, name]) => {
+                    const option = document.createElement('option');
+                    option.value = code;
+                    option.textContent = name;
+                    if (code === selectedDesa) {
+                        option.selected = true;
+                    }
+                    desaSelect.appendChild(option);
+                });
+            }
+        }
+        
+        // Initialize on DOM loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize desa dropdown
+            if (kecamatanSelect && desaSelect) {
+                kecamatanSelect.addEventListener('change', updateDesaOptions);
+                if (kecamatanSelect.value) {
+                    updateDesaOptions();
+                }
+            }
+
+            if (entriesPerPageSelect && filterFormElement && perPageInputElement && pageInputElement) {
+                entriesPerPageSelect.addEventListener('change', function() {
+                    perPageInputElement.value = this.value;
+                    pageInputElement.value = '1';
+                    filterFormElement.submit();
+                });
+            }
+
+            // Handle Umur Tunggal filter visibility
+            const kategoriSelect = document.querySelector('select[name="kategori"]');
+            const rentangUmurGroup = document.getElementById('rentang-umur-group');
+            const customRangeGroup = document.getElementById('custom-range-group');
+            const rentangUmurSelect = document.getElementById('rentang_umur');
+            
+            function toggleUmurFilters() {
+                if (kategoriSelect && rentangUmurGroup) {
+                    if (kategoriSelect.value === 'umur_tunggal') {
+                        rentangUmurGroup.style.display = 'block';
+                        
+                        // Show custom range if custom is selected
+                        if (rentangUmurSelect && customRangeGroup) {
+                            if (rentangUmurSelect.value === 'custom') {
+                                customRangeGroup.style.display = 'block';
+                            } else {
+                                customRangeGroup.style.display = 'none';
+                            }
+                        }
+                    } else {
+                        rentangUmurGroup.style.display = 'none';
+                        if (customRangeGroup) {
+                            customRangeGroup.style.display = 'none';
+                        }
+                    }
+                }
+            }
+            
+            if (kategoriSelect) {
+                kategoriSelect.addEventListener('change', toggleUmurFilters);
+                toggleUmurFilters(); // Initialize on page load
+            }
+            
+            if (rentangUmurSelect) {
+                rentangUmurSelect.addEventListener('change', function() {
+                    if (customRangeGroup) {
+                        if (this.value === 'custom') {
+                            customRangeGroup.style.display = 'block';
+                        } else {
+                            customRangeGroup.style.display = 'none';
+                        }
+                    }
+                });
+            }
+
+            <?php /* Toggle Umur filter removed */ ?>
+            
+            // Initialize scroll buttons and mobile features
+            const container = document.getElementById('tableContainer');
+            if (container) {
+                updateScrollButtons();
+                updateScrollIndicators();
+                addTouchSupport();
+                
+                container.addEventListener('scroll', () => {
+                    updateScrollButtons();
+                    updateScrollIndicators();
+                    updateScrollControlsVisibility();
+                });
+                
+                // Decide initial visibility (Desktop only)
+                updateScrollControlsVisibility();
+                
+                // Always hide scroll indicators on mobile
+                if (window.innerWidth <= 768) {
+                    const scrollIndicators = document.querySelectorAll('.scroll-indicator');
+                    scrollIndicators.forEach(indicator => {
+                        indicator.style.display = 'none';
+                    });
+                }
+            }
+            
+            // Mobile orientation change handler
+            window.addEventListener('orientationchange', () => {
+                setTimeout(() => {
+                    if (container) {
+                        updateScrollButtons();
+                        updateScrollIndicators();
+                        updateScrollControlsVisibility();
+                    }
+                }, 100);
+            });
+            
+            // Window resize handler
+            window.addEventListener('resize', () => {
+                if (container) {
+                    updateScrollButtons();
+                    updateScrollIndicators();
+                    updateScrollControlsVisibility();
+                }
+            });
+        });
+        
+        // Form Loading States
+        if (filterFormElement) {
+            filterFormElement.addEventListener('submit', function() {
+                if (pageInputElement) {
+                    pageInputElement.value = '1';
+                }
+                const submitBtn = this.querySelector('button[type="submit"]');
+                if (!submitBtn) return;
+                const originalText = submitBtn.innerHTML;
+                submitBtn.innerHTML = '<div class="loading mr-2"></div>Memuat...';
+                submitBtn.disabled = true;
+                
+                // Re-enable after 5 seconds as fallback
+                setTimeout(() => {
+                    submitBtn.innerHTML = originalText;
+                    submitBtn.disabled = false;
+                }, 5000);
+            });
+        }
+
+
+    </script>
+
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Dashboard Charts Initialization -->
+    <script>
+        // Data from PHP
+        const chartLabels = <?php echo json_encode($chartData['labels']); ?>;
+        const chartValues = <?php echo json_encode($chartData['values']); ?>;
+        const maleCount = <?php echo $stats['male']; ?>;
+        const femaleCount = <?php echo $stats['female']; ?>;
+
+        // Trend Chart
+        const trendCtx = document.getElementById('trendChart');
+        if (trendCtx) {
+            new Chart(trendCtx, {
+                type: 'line',
+                data: {
+                    labels: chartLabels,
+                    datasets: [{
+                        label: 'Jumlah Penduduk',
+                        data: chartValues,
+                        borderColor: 'rgb(59, 130, 246)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        borderWidth: 3,
+                        fill: true,
+                        tension: 0.4,
+                        pointRadius: 4,
+                        pointHoverRadius: 6,
+                        pointBackgroundColor: 'rgb(59, 130, 246)',
+                        pointBorderColor: '#fff',
+                        pointBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            padding: 12,
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1,
+                            displayColors: false,
+                            callbacks: {
+                                label: function(context) {
+                                    return 'Penduduk: ' + context.parsed.y.toLocaleString();
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: false,
+                            ticks: {
+                                callback: function(value) {
+                                    return value.toLocaleString();
+                                },
+                                color: '#6b7280',
+                                font: {
+                                    size: 11
+                                }
+                            },
+                            grid: {
+                                color: 'rgba(0, 0, 0, 0.05)',
+                                drawBorder: false
+                            }
+                        },
+                        x: {
+                            ticks: {
+                                color: '#6b7280',
+                                font: {
+                                    size: 11
+                                }
+                            },
+                            grid: {
+                                display: false,
+                                drawBorder: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Gender Comparison Chart
+        const genderCtx = document.getElementById('genderChart');
+        if (genderCtx) {
+            new Chart(genderCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Laki-laki', 'Perempuan'],
+                    datasets: [{
+                        data: [maleCount, femaleCount],
+                        backgroundColor: [
+                            'rgb(59, 130, 246)',
+                            'rgb(236, 72, 153)'
+                        ],
+                        borderWidth: 0,
+                        hoverOffset: 10
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            padding: 12,
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1,
+                            callbacks: {
+                                label: function(context) {
+                                    const label = context.label || '';
+                                    const value = context.parsed || 0;
+                                    const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                    const percentage = ((value / total) * 100).toFixed(1);
+                                    return label + ': ' + value.toLocaleString() + ' (' + percentage + '%)';
+                                }
+                            }
+                        }
+                    },
+                    cutout: '70%'
+                }
+            });
+        }
+    </script>
+</body>
+</html>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
